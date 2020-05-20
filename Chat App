@@ -1,0 +1,229 @@
+import datetime
+import tkinter as tk
+from tkinter import ttk
+from PIL import Image, ImageTk
+import requests
+import tkinter.font as font
+
+COLOUR_LIGHT_BACKGROUND_1 = "#fff"
+COLOUR_LIGHT_BACKGROUND_2 = "#f2f3f5"
+COLOUR_LIGHT_BACKGROUND_3 = "#e3e5e8"
+
+COLOUR_LIGHT_TEXT = "#aaa"
+
+COLOUR_BUTTON_NORMAL = "#5fba7d"
+COLOUR_BUTTON_ACTIVE = "#58c77c"
+COLOUR_BUTTON_PRESSED = "#44e378"
+
+
+class Messenger(tk.Tk):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.geometry("1200x500")
+        self.minsize(800, 500)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        self.chat_frame = Chat(
+            self,
+            background=COLOUR_LIGHT_BACKGROUND_3,
+            style="Messages.TFrame"
+        )
+
+        self.chat_frame.grid(row=0, column=0, sticky="NSEW")
+
+
+
+root = Messenger()
+
+font.nametofont("TkDefaultFont").configure(size=14)
+
+style = ttk.Style(root)
+style.theme_use("clam")
+
+style.configure("Messages.TFrame", background=COLOUR_LIGHT_BACKGROUND_3)
+
+style.configure("Controls.TFrame", background=COLOUR_LIGHT_BACKGROUND_2)
+
+style.configure("SendButton.TButton", borderwidth=0, background=COLOUR_BUTTON_NORMAL)
+style.map(
+    "SendButton.TButton",
+    background=[("pressed", COLOUR_BUTTON_PRESSED), ("active", COLOUR_BUTTON_ACTIVE)],
+)
+
+style.configure(
+    "FetchButton.TButton", background=COLOUR_LIGHT_BACKGROUND_1, borderwidth=0
+)
+
+style.configure(
+    "Time.TLabel",
+    padding=5,
+    background=COLOUR_LIGHT_BACKGROUND_1,
+    foreground=COLOUR_LIGHT_TEXT,
+    font=8
+)
+
+style.configure("Avatar.TLabel", background=COLOUR_LIGHT_BACKGROUND_3)
+style.configure("Message.TLabel", background=COLOUR_LIGHT_BACKGROUND_2)
+
+root.mainloop()
+
+
+class Chat(ttk.Frame):
+    def __init__(self, container, background, *args, **kwargs):
+        super().__init__(container, *args, **kwargs)
+
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        self.message_window = MessageWindow(self, background=background)
+        self.message_window.grid(row=0, column=0, sticky="NSEW", pady=5)
+
+        input_frame = ttk.Frame(self, style="Controls.TFrame", padding=10)
+        input_frame.grid(row=1, column=0, sticky="EW")
+
+        self.message_input = tk.Text(input_frame, height=3)
+        self.message_input.pack(expand=True, fill="both", side="left", padx=(0, 10))
+
+        message_submit = ttk.Button(
+            input_frame,
+            text="Send",
+            style="SendButton.TButton",
+            command=self.post_message
+        )
+        message_submit.pack()
+
+        message_fetch = ttk.Button(
+            input_frame,
+            text="Fetch",
+            style="FetchButton.TButton",
+            command=self.get_messages
+        )
+        message_fetch.pack()
+        self.message_window.update_message_widgets(messages, message_labels)
+    
+    def post_message(self):
+        body = self.message_input.get("1.0", "end").strip()
+        requests.post("http://167.99.63.70/message", json={"message": body})
+        self.message_input.delete('1.0', "end")
+        self.get_messages()
+
+    def get_messages(self):
+        global messages
+        messages = requests.get("http://167.99.63.70/messages").json()
+        self.message_window.update_message_widgets(messages, message_labels)
+        self.after(150, lambda: self.message_window.yview_moveto(1.0))
+
+
+
+
+
+
+
+
+
+SCREEN_SIZE_TO_MESSAGE_WIDTH = {
+    1100: 900,
+    950: 700,
+    750: 550
+}
+
+
+class MessageWindow(tk.Canvas):
+    def __init__(self, container, *args, **kwargs):
+        super().__init__(container, *args, **kwargs, highlightthickness=0)
+
+        self.messages_frame = ttk.Frame(container, style="Messages.TFrame")
+        self.messages_frame.columnconfigure(0, weight=1)
+
+        self.scrollable_window = self.create_window((0, 0), window=self.messages_frame, anchor="nw", width=self.winfo_width())
+
+        def configure_scroll_region(event):
+            self.configure(scrollregion=self.bbox("all"))
+        
+        def configure_window_size(event):
+            self.itemconfig(self.scrollable_window, width=self.winfo_width())
+
+        self.bind("<Configure>", configure_window_size)
+        self.messages_frame.bind("<Configure>", configure_scroll_region)
+        self.bind_all("<MouseWheel>", self._on_mousewheel)
+
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.yview)
+        scrollbar.grid(row=0, column=1, sticky="NS")
+
+        self.configure(yscrollcommand=scrollbar.set)
+        self.yview_moveto(1.0)
+    
+    # https://stackoverflow.com/a/17457843/1587271
+    def _on_mousewheel(self, event):
+        self.yview_scroll(-int(event.delta/120), "units")
+
+    def update_message_widgets(self, messages, message_labels):
+        existing_labels = [
+            (message["text"], time["text"]) for message, time in message_labels
+        ]
+
+        for message in messages:
+            message_time = datetime.datetime.fromtimestamp(message["date"]).strftime(
+                "%d-%m-%Y %H:%M:%S"
+            )
+
+            if (message["message"], message_time) not in existing_labels:
+                self._create_message_container(message["message"], message_time, message_labels)
+    
+    def _create_message_container(self, message_content, message_time, message_labels):
+        container = ttk.Frame(self.messages_frame, style="Messages.TFrame")
+        container.columnconfigure(1, weight=1)
+        container.grid(sticky="EW", padx=(10, 50), pady=10)
+
+        def reconfigure_message_labels(event):
+            closest_break_point = min(SCREEN_SIZE_TO_MESSAGE_WIDTH.keys(), key=lambda b: abs(b - container.winfo_width()))
+            for label, _ in message_labels:
+                if label.winfo_width() < closest_break_point:
+                    label.configure(wraplength=SCREEN_SIZE_TO_MESSAGE_WIDTH[closest_break_point])
+            self.messages_frame.update()
+
+        container.bind("<Configure>", reconfigure_message_labels)
+        self._create_message_bubble(container, message_content, message_time, message_labels)
+    
+    def _create_message_bubble(self, container, message_content, message_time, message_labels):
+        avatar_image = Image.open("avatar6.png")
+        avatar_photo = ImageTk.PhotoImage(avatar_image)
+
+        avatar_label = ttk.Label(
+            container,
+            image=avatar_photo,
+            style="Avatar.TLabel"
+        )
+
+        avatar_label.image = avatar_photo
+        avatar_label.grid(
+            row=0,
+            column=0,
+            rowspan=2,
+            sticky="NEW",
+            padx=(0, 10),
+            pady=(5, 0)
+        )
+
+        time_label = ttk.Label(
+            container,
+            text=message_time,
+            style="Time.TLabel"
+        )
+
+        time_label.grid(row=0, column=1, sticky="NEW")
+
+        message_label = ttk.Label(
+            container,
+            text=message_content,
+            wraplength=800,
+            justify="left",
+            anchor="w",
+            style="Message.TLabel"
+        )
+
+        message_label.grid(row=1, column=1, sticky="NEW")
+
+        message_labels.append((message_label, time_label))
